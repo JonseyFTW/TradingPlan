@@ -90,12 +90,64 @@ export default function ReportCard({ report }) {
               </Grid>
 
               {/* Volume Analysis */}
-              <Grid item xs={12}>
+              <Grid item xs={12} md={6}>
                 <Box sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
                   <Typography variant="subtitle1" fontWeight="bold">📊 Volume Analysis</Typography>
                   <Typography variant="body2" sx={{ mt: 1 }}>{analysis.volume_analysis}</Typography>
                 </Box>
               </Grid>
+
+              {/* Relative Strength Analysis */}
+              {analysis.relative_strength && !analysis.relative_strength.error && (
+                <Grid item xs={12} md={6}>
+                  <Box sx={{ p: 2, bgcolor: 'success.light', borderRadius: 1 }}>
+                    <Typography variant="subtitle1" fontWeight="bold">📈 Relative Strength</Typography>
+                    <Typography variant="body2" sx={{ mt: 1, mb: 2 }}>
+                      {analysis.relative_strength.interpretation}
+                    </Typography>
+                    
+                    <Grid container spacing={1}>
+                      <Grid item xs={6}>
+                        <Typography variant="caption" color="text.secondary">
+                          vs SPY (20d)
+                        </Typography>
+                        <Typography 
+                          variant="body2" 
+                          color={analysis.relative_strength.vs_spy?.outperforming_market_20d ? 'success.main' : 'error.main'}
+                          fontWeight="bold"
+                        >
+                          {analysis.relative_strength.vs_spy?.relative_strength_20d > 0 ? '+' : ''}
+                          {analysis.relative_strength.vs_spy?.relative_strength_20d}%
+                        </Typography>
+                      </Grid>
+                      <Grid item xs={6}>
+                        <Typography variant="caption" color="text.secondary">
+                          Beta
+                        </Typography>
+                        <Typography variant="body2" fontWeight="bold">
+                          {analysis.relative_strength.vs_spy?.beta}
+                        </Typography>
+                      </Grid>
+                      
+                      {analysis.relative_strength.vs_sector && !analysis.relative_strength.vs_sector.error && (
+                        <Grid item xs={12}>
+                          <Typography variant="caption" color="text.secondary">
+                            vs {analysis.relative_strength.vs_sector.sector_etf} (20d)
+                          </Typography>
+                          <Typography 
+                            variant="body2" 
+                            color={analysis.relative_strength.vs_sector.outperforming_sector ? 'success.main' : 'error.main'}
+                            fontWeight="bold"
+                          >
+                            {analysis.relative_strength.vs_sector.relative_strength_vs_sector > 0 ? '+' : ''}
+                            {analysis.relative_strength.vs_sector.relative_strength_vs_sector}%
+                          </Typography>
+                        </Grid>
+                      )}
+                    </Grid>
+                  </Box>
+                </Grid>
+              )}
             </Grid>
           </CardContent>
         </Card>

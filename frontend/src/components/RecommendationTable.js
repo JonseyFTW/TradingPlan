@@ -15,7 +15,7 @@ export default function RecommendationTable({ recs, onSelect }) {
         </TableRow>
       </TableHead>
       <TableBody>
-        {recs.map(r=>(
+        {(recs || []).map(r=>(
           <TableRow key={r.symbol}>
             <TableCell>{r.symbol}</TableCell>
             <TableCell>{r.score}</TableCell>

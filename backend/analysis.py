@@ -1,5 +1,5 @@
 import pandas as pd, pandas_ta as ta
-from utils import fetch_ohlcv
+from utils import fetch_ohlcv, get_ticker_details
 import numpy as np
 import json
 
@@ -123,6 +123,134 @@ def generate_fibonacci_context(fibs, price):
         
     return "Price outside primary Fibonacci retracement zones."
 
+def calculate_relative_strength(symbol, df):
+    """Calculate relative strength vs SPY and sector ETF"""
+    try:
+        # Get SPY data for comparison
+        spy_df = fetch_ohlcv("SPY", months=3)
+        if spy_df.empty:
+            return {"error": "Cannot fetch SPY data for relative strength calculation"}
+        
+        # Align dates and calculate returns
+        common_dates = df.index.intersection(spy_df.index)
+        if len(common_dates) < 20:
+            return {"error": "Insufficient overlapping data for relative strength calculation"}
+        
+        # Get returns for overlapping period
+        stock_returns = df.loc[common_dates, "Close"].pct_change().dropna()
+        spy_returns = spy_df.loc[common_dates, "Close"].pct_change().dropna()
+        
+        # Calculate relative strength metrics
+        stock_perf_20d = ((df["Close"].iloc[-1] / df["Close"].iloc[-20]) - 1) * 100 if len(df) >= 20 else 0
+        spy_perf_20d = ((spy_df["Close"].iloc[-1] / spy_df["Close"].iloc[-20]) - 1) * 100 if len(spy_df) >= 20 else 0
+        
+        stock_perf_5d = ((df["Close"].iloc[-1] / df["Close"].iloc[-5]) - 1) * 100 if len(df) >= 5 else 0
+        spy_perf_5d = ((spy_df["Close"].iloc[-1] / spy_df["Close"].iloc[-5]) - 1) * 100 if len(spy_df) >= 5 else 0
+        
+        # Relative strength vs SPY
+        rs_vs_spy_20d = stock_perf_20d - spy_perf_20d
+        rs_vs_spy_5d = stock_perf_5d - spy_perf_5d
+        
+        # Calculate beta (sensitivity to market moves)
+        if len(stock_returns) >= 20 and len(spy_returns) >= 20:
+            beta = np.cov(stock_returns, spy_returns)[0,1] / np.var(spy_returns)
+        else:
+            beta = 1.0
+        
+        # Get sector information for sector relative strength
+        sector_rs = {"error": "Sector data unavailable"}
+        try:
+            ticker_details = get_ticker_details(symbol)
+            sector_description = ticker_details.get("sic_description", "")
+            
+            # Map to sector ETFs (simplified mapping)
+            sector_etf_map = {
+                "technology": "XLK",
+                "software": "XLK", 
+                "computer": "XLK",
+                "pharmaceutical": "XLV",
+                "biotechnology": "XLV",
+                "healthcare": "XLV",
+                "financial": "XLF",
+                "bank": "XLF",
+                "retail": "XLY",
+                "consumer": "XLY",
+                "energy": "XLE",
+                "oil": "XLE",
+                "utility": "XLU",
+                "electric": "XLU",
+                "industrial": "XLI",
+                "manufacturing": "XLI"
+            }
+            
+            sector_etf = None
+            for keyword, etf in sector_etf_map.items():
+                if keyword.lower() in sector_description.lower():
+                    sector_etf = etf
+                    break
+            
+            if sector_etf:
+                sector_df = fetch_ohlcv(sector_etf, months=3)
+                if not sector_df.empty and len(sector_df) >= 20:
+                    sector_perf_20d = ((sector_df["Close"].iloc[-1] / sector_df["Close"].iloc[-20]) - 1) * 100
+                    rs_vs_sector = stock_perf_20d - sector_perf_20d
+                    sector_rs = {
+                        "sector_etf": sector_etf,
+                        "sector_performance_20d": round(sector_perf_20d, 2),
+                        "relative_strength_vs_sector": round(rs_vs_sector, 2),
+                        "outperforming_sector": bool(rs_vs_sector > 0)
+                    }
+        except:
+            pass
+        
+        return {
+            "vs_spy": {
+                "stock_performance_20d": round(stock_perf_20d, 2),
+                "stock_performance_5d": round(stock_perf_5d, 2),
+                "spy_performance_20d": round(spy_perf_20d, 2),
+                "spy_performance_5d": round(spy_perf_5d, 2),
+                "relative_strength_20d": round(rs_vs_spy_20d, 2),
+                "relative_strength_5d": round(rs_vs_spy_5d, 2),
+                "outperforming_market_20d": bool(rs_vs_spy_20d > 0),
+                "outperforming_market_5d": bool(rs_vs_spy_5d > 0),
+                "beta": round(beta, 2)
+            },
+            "vs_sector": sector_rs,
+            "interpretation": generate_relative_strength_interpretation(rs_vs_spy_20d, rs_vs_spy_5d, beta)
+        }
+    except Exception as e:
+        return {"error": f"Relative strength calculation failed: {str(e)}"}
+
+def generate_relative_strength_interpretation(rs_20d, rs_5d, beta):
+    """Generate interpretation of relative strength metrics"""
+    interpretations = []
+    
+    # 20-day relative strength
+    if rs_20d > 5:
+        interpretations.append(f"STRONG OUTPERFORMANCE: Stock outperforming SPY by {rs_20d:.1f}% over 20 days - shows strong relative momentum.")
+    elif rs_20d > 0:
+        interpretations.append(f"MODEST OUTPERFORMANCE: Stock outperforming SPY by {rs_20d:.1f}% over 20 days - positive relative trend.")
+    elif rs_20d > -5:
+        interpretations.append(f"SLIGHT UNDERPERFORMANCE: Stock underperforming SPY by {abs(rs_20d):.1f}% over 20 days - market keeping pace.")
+    else:
+        interpretations.append(f"SIGNIFICANT UNDERPERFORMANCE: Stock underperforming SPY by {abs(rs_20d):.1f}% over 20 days - weak relative strength.")
+    
+    # 5-day trend
+    if rs_5d > 2:
+        interpretations.append(f"RECENT STRENGTH: Strong 5-day outperformance ({rs_5d:.1f}%) suggests accelerating momentum.")
+    elif rs_5d < -2:
+        interpretations.append(f"RECENT WEAKNESS: Poor 5-day performance ({rs_5d:.1f}%) suggests momentum loss.")
+    
+    # Beta interpretation
+    if beta > 1.5:
+        interpretations.append(f"HIGH BETA ({beta:.1f}): Stock is highly sensitive to market moves - expect amplified volatility.")
+    elif beta < 0.5:
+        interpretations.append(f"LOW BETA ({beta:.1f}): Stock moves independently of market - defensive characteristics.")
+    else:
+        interpretations.append(f"MODERATE BETA ({beta:.1f}): Stock moves roughly in line with market volatility.")
+    
+    return " ".join(interpretations)
+
 def analyze_ticker(symbol: str):
     df = fetch_ohlcv(symbol)
     if df.empty:
@@ -221,6 +349,10 @@ def analyze_ticker(symbol: str):
             "current_trend": "BULLISH" if indicators_data.get("MACD", 0) > 0 else "BEARISH"
         }
     }
+    
+    # Calculate relative strength analysis
+    relative_strength = calculate_relative_strength(symbol, df)
+    analysis_insights["relative_strength"] = relative_strength
 
     return {
       "symbol":     symbol.upper(),

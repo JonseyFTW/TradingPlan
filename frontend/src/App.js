@@ -8,6 +8,9 @@ import ReportCard from './components/ReportCard';
 import RecommendationTable from './components/RecommendationTable';
 import Watchlist from './components/Watchlist';
 import AlertsList from './components/AlertsList';
+import StockScreener from './components/StockScreener';
+import MarketDashboard from './components/MarketDashboard';
+import Portfolio from './components/Portfolio';
 
 function App() {
   const [view, setView] = useState('analyze');
@@ -32,7 +35,7 @@ function App() {
       const { data } = await axios.get(`/api/analyze/${sym}`);
       setReport(data);
       setView('analyze');
-    } catch {
+    } catch (error) {
       alert("Not found"); setReport(null);
     }
     setLoading(false);
@@ -69,7 +72,7 @@ function App() {
       <AppBar position="static">
         <Toolbar>
           <Typography variant="h6" sx={{ flexGrow:1 }}>Swing Trade Analyzer</Typography>
-          {['analyze','recs','watch','alerts'].map(v=>
+          {['analyze','screener','market','portfolio','recs','watch','alerts'].map(v=>
             <Button
               key={v}
               color="inherit"
@@ -133,6 +136,12 @@ function App() {
         {view==='watch' && (
           <Watchlist items={watch} onRemove={removeWatch}/>
         )}
+
+        {view==='screener' && <StockScreener />}
+
+        {view==='market' && <MarketDashboard />}
+
+        {view==='portfolio' && <Portfolio />}
 
         {view==='alerts' && (
           <>

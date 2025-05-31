@@ -9,7 +9,9 @@
       "Bash(docker-compose build:*)",
       "Bash(touch:*)",
       "Bash(docker-compose exec backend ls:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(docker-compose exec:*)",
+      "Bash(find:*)"
     ],
     "deny": []
   }
