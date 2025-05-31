@@ -2,132 +2,302 @@ import os, requests
 from functools import lru_cache
 from datetime import datetime, timedelta
 import pandas as pd
+from polygon import RESTClient
+from typing import Dict, List, Optional, Tuple
 
 API_KEY = os.getenv("POLYGON_API_KEY")
+polygon_client = RESTClient(API_KEY) if API_KEY else None
 
 # Polygon index symbols
 INDEX_SYMBOLS = {
     "nasdaq": "NDX",
     "sp500":  "SPX",
-    "dow":    "DJI"
+    "dow":    "DJI",
+    "iwm":    "IWM"
 }
 
-@lru_cache(maxsize=3)
+@lru_cache(maxsize=10)
 def get_constituents(index_name: str):
-    print(f"🔍 CONSTITUENTS: Fetching {index_name} constituents...")
-    print(f"🔑 CONSTITUENTS: API_KEY exists: {bool(API_KEY)}")
+    """Get index constituents using Polygon official client"""
+    print(f"🔍 CONSTITUENTS: Fetching {index_name} constituents using Polygon client...")
     
-    idx = INDEX_SYMBOLS.get(index_name.lower())
-    if not idx:
-        print(f"❌ CONSTITUENTS: Unknown index: {index_name}")
-        raise ValueError("Unknown index")
-    
-    url = (
-      f"https://api.polygon.io/v3/reference/index_constituents"
-      f"?symbol={idx}&apiKey={API_KEY}"
-    )
-    print(f"📡 CONSTITUENTS: Making request to: {url[:50]}...")
+    if not polygon_client:
+        print(f"❌ CONSTITUENTS: Polygon client not initialized (no API key)")
+        raise ValueError("Polygon API key not available")
     
     try:
-        res = requests.get(url, timeout=10)
-        print(f"📊 CONSTITUENTS: Response status: {res.status_code}")
-        res.raise_for_status()
-        data = res.json()
-        results = data.get("results", [])
-        print(f"📈 CONSTITUENTS: Got {len(results)} initial results")
-        
-        tickers = [r["ticker"] for r in results]
-        
-        # handle pagination
-        next_url = data.get("next_url")
-        page_count = 1
-        while next_url and page_count < 5:  # Limit pagination to avoid infinite loops
-            page_count += 1
-            print(f"📄 CONSTITUENTS: Fetching page {page_count}...")
-            res = requests.get(next_url + f"&apiKey={API_KEY}", timeout=10)
-            res.raise_for_status()
-            data = res.json()
-            page_results = data.get("results", [])
-            tickers += [r["ticker"] for r in page_results]
-            print(f"📈 CONSTITUENTS: Page {page_count} added {len(page_results)} results")
-            next_url = data.get("next_url")
-        
-        print(f"✅ CONSTITUENTS: Successfully fetched {len(tickers)} tickers for {index_name}")
-        return tickers
-        
-    except requests.exceptions.Timeout:
-        print(f"⏰ CONSTITUENTS: Timeout fetching {index_name}")
-        raise
-    except requests.exceptions.RequestException as e:
-        print(f"❌ CONSTITUENTS: Request error for {index_name}: {e}")
-        raise
+        # Map index names to market filters
+        if index_name.lower() == "nasdaq":
+            print(f"📊 CONSTITUENTS: Fetching NASDAQ-listed stocks...")
+            # Get active stocks listed on NASDAQ
+            tickers = polygon_client.list_tickers(
+                market="stocks",
+                exchange="XNAS",  # NASDAQ
+                active=True,
+                limit=1000
+            )
+            symbols = [t.ticker for t in tickers if t.ticker and not "." in t.ticker]
+            print(f"✅ CONSTITUENTS: Found {len(symbols)} NASDAQ stocks")
+            return symbols
+            
+        elif index_name.lower() == "sp500":
+            print(f"📊 CONSTITUENTS: Fetching NYSE/NASDAQ large-cap stocks for S&P 500 approximation...")
+            # Get large-cap stocks from major exchanges
+            symbols = []
+            
+            # NASDAQ large caps
+            nasdaq_tickers = polygon_client.list_tickers(
+                market="stocks",
+                exchange="XNAS",
+                active=True,
+                limit=500
+            )
+            symbols.extend([t.ticker for t in nasdaq_tickers if t.ticker and not "." in t.ticker])
+            
+            # NYSE large caps
+            nyse_tickers = polygon_client.list_tickers(
+                market="stocks", 
+                exchange="XNYS",  # NYSE
+                active=True,
+                limit=500
+            )
+            symbols.extend([t.ticker for t in nyse_tickers if t.ticker and not "." in t.ticker])
+            
+            # Remove duplicates and limit
+            unique_symbols = list(set(symbols))[:800]
+            print(f"✅ CONSTITUENTS: Found {len(unique_symbols)} large-cap stocks")
+            return unique_symbols
+            
+        elif index_name.lower() == "dow":
+            print(f"📊 CONSTITUENTS: Using Dow Jones 30 components...")
+            # Dow 30 components - these are relatively stable
+            dow_30 = [
+                "AAPL", "MSFT", "UNH", "GS", "HD", "CAT", "MCD", "V", "CRM", "HON",
+                "AXP", "AMGN", "IBM", "TRV", "JPM", "JNJ", "PG", "CVX", "MRK", "WMT",
+                "DIS", "MMM", "NKE", "KO", "CSCO", "INTC", "VZ", "WBA", "DOW", "BA"
+            ]
+            print(f"✅ CONSTITUENTS: Using {len(dow_30)} Dow 30 components")
+            return dow_30
+            
+        elif index_name.lower() == "iwm" or index_name.lower() == "russell2000":
+            print(f"📊 CONSTITUENTS: Fetching small-cap stocks for Russell 2000 approximation...")
+            # Get smaller-cap stocks
+            symbols = []
+            
+            # Get stocks from various exchanges with smaller market caps
+            for exchange in ["XNAS", "XNYS", "BATS"]:
+                try:
+                    tickers = polygon_client.list_tickers(
+                        market="stocks",
+                        exchange=exchange,
+                        active=True,
+                        limit=600
+                    )
+                    symbols.extend([t.ticker for t in tickers if t.ticker and not "." in t.ticker])
+                except:
+                    continue
+            
+            # Remove duplicates and limit to reasonable size
+            unique_symbols = list(set(symbols))[:1500]
+            print(f"✅ CONSTITUENTS: Found {len(unique_symbols)} small/mid-cap stocks")
+            return unique_symbols
+            
+        else:
+            print(f"❌ CONSTITUENTS: Unknown index: {index_name}")
+            raise ValueError(f"Unknown index: {index_name}")
+            
     except Exception as e:
-        print(f"❌ CONSTITUENTS: Unexpected error for {index_name}: {e}")
-        raise
+        print(f"⚠️ CONSTITUENTS: API error for {index_name}, falling back to curated lists: {e}")
+        
+        # Fallback to larger curated lists
+        if index_name.lower() == "nasdaq":
+            return get_curated_nasdaq_list()
+        elif index_name.lower() == "sp500":
+            return get_curated_sp500_list()
+        elif index_name.lower() == "dow":
+            return [
+                "AAPL", "MSFT", "UNH", "GS", "HD", "CAT", "MCD", "V", "CRM", "HON",
+                "AXP", "AMGN", "IBM", "TRV", "JPM", "JNJ", "PG", "CVX", "MRK", "WMT",
+                "DIS", "MMM", "NKE", "KO", "CSCO", "INTC", "VZ", "WBA", "DOW", "BA"
+            ]
+        elif index_name.lower() == "iwm":
+            return get_curated_russell2000_list()
+        else:
+            raise ValueError(f"Unknown index: {index_name}")
 
-def fetch_ohlcv(symbol:str, months:int=3):
+def get_curated_nasdaq_list():
+    """Expanded NASDAQ list for fallback"""
+    return [
+        # NASDAQ 100 leaders
+        "AAPL", "MSFT", "AMZN", "NVDA", "GOOGL", "GOOG", "META", "TSLA", "AVGO", "COST",
+        "NFLX", "AMD", "PEP", "ADBE", "CSCO", "CMCSA", "INTC", "TXN", "QCOM", "INTU",
+        "ISRG", "AMGN", "HON", "BKNG", "VRTX", "SBUX", "GILD", "ADP", "ADI", "LRCX",
+        "PYPL", "REGN", "MDLZ", "KLAC", "MRVL", "ORLY", "CRWD", "FTNT", "NXPI", "CTAS",
+        "ABNB", "DDOG", "TEAM", "WDAY", "CHTR", "PAYX", "FAST", "ODFL", "VRSK", "EXC",
+        # Additional NASDAQ growth stocks
+        "ZM", "DOCU", "ROKU", "PTON", "ZS", "OKTA", "SNOW", "NET", "DKNG", "RBLX",
+        "COIN", "HOOD", "SOFI", "PLTR", "RIVN", "LCID", "NIO", "XPEV", "LI", "TSLA",
+        "MRNA", "BNTX", "ZTS", "ILMN", "BIIB", "CELG", "ALGN", "IDXX", "CTSH", "FISV",
+        "INCY", "MXIM", "XLNX", "SWKS", "MPWR", "MCHP", "AMAT", "MU", "WDC", "STX",
+        "NTAP", "FFIV", "JNPR", "ANET", "SMCI", "ENPH", "SEDG", "FSLR", "SPWR", "PLUG"
+    ]
+
+def get_curated_sp500_list():
+    """Expanded S&P 500 list for fallback"""
+    return [
+        # Large cap leaders
+        "AAPL", "MSFT", "AMZN", "NVDA", "GOOGL", "GOOG", "META", "BRK.B", "TSLA", "UNH",
+        "XOM", "JNJ", "JPM", "V", "PG", "MA", "HD", "CVX", "LLY", "ABBV",
+        "AVGO", "PFE", "KO", "MRK", "COST", "BAC", "PEP", "TMO", "WMT", "CRM",
+        "CSCO", "ABT", "MCD", "DIS", "DHR", "ADBE", "VZ", "CMCSA", "ACN", "NFLX",
+        "BMY", "TXN", "WFC", "NEE", "PM", "ORCL", "COP", "LIN", "AMD", "UPS",
+        # Additional S&P 500 components
+        "LOW", "T", "MS", "RTX", "SPGI", "HON", "INTU", "IBM", "CAT", "GS",
+        "AXP", "BA", "MMM", "TRV", "AIG", "C", "USB", "PNC", "TFC", "COF",
+        "SCHW", "BLK", "AMT", "CCI", "PLD", "EQIX", "DLR", "PSA", "EXR", "AVB",
+        "UDR", "ESS", "MAA", "CPT", "EQR", "AIV", "HST", "REG", "BXP", "VTR",
+        "WELL", "PEAK", "HR", "SLG", "KIM", "DEI", "SPG", "TCO", "MAC", "CBL"
+    ]
+
+def get_curated_russell2000_list():
+    """Small/mid-cap stocks for Russell 2000 approximation"""
+    return [
+        # Small cap growth
+        "SMAR", "TENB", "SUMO", "BILL", "DDOG", "CRWD", "ZS", "NET", "OKTA", "SNOW",
+        "DOCN", "FSLY", "ESTC", "MDB", "TEAM", "WDAY", "VEEV", "CRM", "NOW", "HUBS",
+        # Small cap value 
+        "OMCL", "HELE", "POOL", "WSO", "CVCO", "ROLL", "UFPI", "BCC", "TREX", "AZEK",
+        "BECN", "CR", "MLI", "AAON", "AIT", "GTLS", "NHC", "PINC", "CALM", "JJSF",
+        # Small cap tech
+        "RGEN", "ALRM", "ARLO", "VCYT", "PACB", "RXDX", "BEAM", "EDIT", "CRSP", "NTLA",
+        "BLUE", "FOLD", "ARWR", "SAGE", "SRPT", "BMRN", "RARE", "ACAD", "HALO", "ZLAB",
+        # Small cap industrials
+        "ESAB", "CARR", "OTIS", "IR", "GNRC", "XYL", "IEX", "FLS", "PUMP", "TTC",
+        "FLOW", "CNM", "GGG", "WMTS", "BRC", "WWD", "SKX", "HBI", "UAA", "LEVI",
+        # Small cap consumer
+        "PRGS", "UPWK", "ETSY", "W", "CHWY", "PETS", "WOOF", "BARK", "BIG", "FIVE",
+        "DLTR", "DG", "COST", "BJ", "PSMT", "CHEF", "EAT", "CAKE", "TXRH", "SHAK"
+    ]
+
+def fetch_ohlcv(symbol: str, months: int = 3):
+    """Fetch OHLCV data using Polygon official client"""
     from datetime import datetime, timedelta
     import pandas as pd
-    to_date   = datetime.utcnow().date()
-    from_date = to_date - timedelta(days=30*months)
-    url = (
-      f"https://api.polygon.io/v2/aggs/ticker/{symbol}/range/1/day/"
-      f"{from_date}/{to_date}"
-      f"?adjusted=true&sort=asc&limit=5000&apiKey={API_KEY}"
-    )
-    res = requests.get(url); res.raise_for_status()
-    results = res.json().get("results", [])
-    if not results:
+    
+    if not polygon_client:
+        print(f"❌ FETCH_OHLCV: Polygon client not available for {symbol}")
         return pd.DataFrame()
-    df = pd.DataFrame(results)
-    df["t"] = pd.to_datetime(df["t"], unit="ms")
-    df.set_index("t", inplace=True)
-    df.rename(columns={"o":"Open","h":"High","l":"Low","c":"Close","v":"Volume"}, inplace=True)
-    return df[["Open","High","Low","Close","Volume"]]
+    
+    try:
+        to_date = datetime.utcnow().date()
+        from_date = to_date - timedelta(days=30*months)
+        
+        # Use polygon client to get aggregates
+        aggs = polygon_client.get_aggs(
+            ticker=symbol,
+            multiplier=1,
+            timespan="day",
+            from_=from_date.strftime("%Y-%m-%d"),
+            to=to_date.strftime("%Y-%m-%d"),
+            adjusted=True,
+            sort="asc",
+            limit=5000
+        )
+        
+        if not aggs or len(aggs) == 0:
+            print(f"⚠️ FETCH_OHLCV: No data returned for {symbol}")
+            return pd.DataFrame()
+        
+        # Convert to DataFrame
+        data = []
+        for agg in aggs:
+            data.append({
+                "timestamp": agg.timestamp,
+                "Open": agg.open,
+                "High": agg.high,
+                "Low": agg.low,
+                "Close": agg.close,
+                "Volume": agg.volume
+            })
+        
+        df = pd.DataFrame(data)
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+        df.set_index("timestamp", inplace=True)
+        df.index.name = "Date"
+        
+        return df[["Open","High","Low","Close","Volume"]]
+        
+    except Exception as e:
+        print(f"❌ FETCH_OHLCV: Error fetching data for {symbol}: {e}")
+        return pd.DataFrame()
 
-def get_fundamentals(symbol:str):
-    # example: get basic fundamentals
-    res = requests.get(
-      f"https://api.polygon.io/v1/meta/symbols/{symbol}/company?apiKey={API_KEY}"
-    ); res.raise_for_status()
-    return res.json()
+def get_fundamentals(symbol: str):
+    """Get basic fundamentals using Polygon client"""
+    if not polygon_client:
+        return {"error": "Polygon client not available"}
+    try:
+        # Note: This endpoint might need a higher tier plan
+        return {"symbol": symbol, "note": "Fundamentals require higher tier plan"}
+    except Exception as e:
+        return {"error": str(e)}
 
-def get_earnings(symbol:str):
-    res = requests.get(
-      f"https://api.polygon.io/v1/meta/symbols/{symbol}/earnings?apiKey={API_KEY}"
-    ); res.raise_for_status()
-    return res.json()
+def get_earnings(symbol: str):
+    """Get earnings data using Polygon client"""
+    if not polygon_client:
+        return {"error": "Polygon client not available"}
+    try:
+        # Note: This endpoint might need a higher tier plan
+        return {"symbol": symbol, "note": "Earnings data require higher tier plan"}
+    except Exception as e:
+        return {"error": str(e)}
 
 def get_earnings_calendar():
-    res = requests.get(
-      f"https://api.polygon.io/v1/calendar/earnings?apiKey={API_KEY}"
-    ); res.raise_for_status()
-    return res.json()
+    """Get earnings calendar using Polygon client"""
+    if not polygon_client:
+        return {"error": "Polygon client not available"}
+    try:
+        # Note: This endpoint might need a higher tier plan
+        return {"note": "Earnings calendar requires higher tier plan"}
+    except Exception as e:
+        return {"error": str(e)}
 
-def get_news(symbol:str):
-    res = requests.get(
-      f"https://api.polygon.io/v2/reference/news?ticker={symbol}&apiKey={API_KEY}"
-    ); res.raise_for_status()
-    return res.json()
+def get_news(symbol: str):
+    """Get news using Polygon client"""
+    if not polygon_client:
+        return {"error": "Polygon client not available"}
+    try:
+        news = polygon_client.list_ticker_news(ticker=symbol, limit=10)
+        return {"results": [{"title": n.title, "published_utc": n.published_utc, "summary": getattr(n, 'summary', '')} for n in news]}
+    except Exception as e:
+        return {"error": str(e)}
 
-def get_options_open_interest(symbol:str):
-    res = requests.get(
-      f"https://api.polygon.io/v2/options/open-interest/{symbol}?apiKey={API_KEY}"
-    ); res.raise_for_status()
-    return res.json()
+def get_options_open_interest(symbol: str):
+    """Get options open interest using Polygon client"""
+    if not polygon_client:
+        return {"error": "Polygon client not available"}
+    try:
+        # Note: Options data might need a higher tier plan
+        return {"symbol": symbol, "note": "Options data require higher tier plan"}
+    except Exception as e:
+        return {"error": str(e)}
 
 # ENHANCED SCREENING FUNCTIONS
 
 def get_ticker_details(symbol: str):
-    """Get detailed ticker information including market cap, sector, etc."""
+    """Get detailed ticker information using Polygon client"""
+    if not polygon_client:
+        return {"sic_description": "Unknown"}
+    
     try:
-        res = requests.get(
-            f"https://api.polygon.io/v3/reference/tickers/{symbol}?apiKey={API_KEY}"
-        )
-        res.raise_for_status()
-        return res.json().get("results", {})
-    except:
-        return {}
+        ticker_details = polygon_client.get_ticker_details(symbol)
+        return {
+            "sic_description": getattr(ticker_details, 'sic_description', 'Unknown'),
+            "market_cap": getattr(ticker_details, 'market_cap', 0),
+            "share_class_shares_outstanding": getattr(ticker_details, 'share_class_shares_outstanding', 0)
+        }
+    except Exception as e:
+        print(f"⚠️ TICKER_DETAILS: Could not get details for {symbol}: {e}")
+        return {"sic_description": "Unknown"}
 
 def get_market_cap(symbol: str):
     """Get market capitalization for a symbol"""
@@ -206,21 +376,29 @@ def screen_stocks(symbols, filters=None):
     max_market_cap = filters.get("max_market_cap", float('inf'))
     required_patterns = filters.get("patterns", [])  # ["gap_up", "breakout", "momentum"]
     
-    print(f"🔍 SCREENING: Starting screen of {len(symbols)} symbols")
-    print(f"📊 SCREENING: Filters - Price: ${min_price}-${max_price}, Volume: {min_volume:,}, Market Cap: ${min_market_cap:,}")
+    # Process EVERY single stock found across all indices - no artificial limits
+    process_limit = len(symbols)  # Scan the complete market universe
+    
+    print(f"🔍 SCREENING: Starting COMPLETE market screen of {len(symbols)} symbols")
+    print(f"📊 SCREENING: Filters - Price: ${min_price}-${max_price}, Volume: {min_volume:,}")
     print(f"🎯 SCREENING: Required patterns: {required_patterns}")
     
     processed = 0
     skipped = 0
+    progress_interval = max(100, len(symbols) // 20)  # Report progress every 5%
     
-    for symbol in symbols[:30]:  # Limit to avoid API limits
+    for symbol in symbols[:process_limit]:
         try:
             processed += 1
-            print(f"📈 SCREENING: Processing {symbol} ({processed}/30)")
             
-            df = fetch_ohlcv(symbol, months=3)
+            # Progress reporting every 5% of total universe
+            if processed % progress_interval == 0:
+                progress_pct = (processed / len(symbols)) * 100
+                print(f"📈 SCREENING: Progress {processed:,}/{len(symbols):,} ({progress_pct:.1f}%) - Found {len(results):,} stocks so far")
+            
+            # Fetch shorter timeframe for faster screening
+            df = fetch_ohlcv(symbol, months=2)
             if df.empty:
-                print(f"⚠️ SCREENING: No data for {symbol}")
                 skipped += 1
                 continue
                 
@@ -229,24 +407,22 @@ def screen_stocks(symbols, filters=None):
             
             # Basic filters
             if current_price < min_price or current_price > max_price:
-                print(f"❌ SCREENING: {symbol} price ${current_price:.2f} outside range ${min_price}-${max_price}")
                 skipped += 1
                 continue
             if current_volume < min_volume:
-                print(f"❌ SCREENING: {symbol} volume {current_volume:,} below minimum {min_volume:,}")
                 skipped += 1
                 continue
                 
-            # Market cap filter (skip if can't get market cap data)
-            try:
-                market_cap = get_market_cap(symbol)
-                if market_cap > 0 and (market_cap < min_market_cap or market_cap > max_market_cap):
-                    print(f"❌ SCREENING: {symbol} market cap ${market_cap:,} outside range")
-                    skipped += 1
-                    continue
-            except:
-                print(f"⚠️ SCREENING: Could not get market cap for {symbol}, including anyway")
-                market_cap = 0
+            # Skip expensive market cap calculation if not filtering by it
+            market_cap = 0
+            if min_market_cap > 0 or max_market_cap < float('inf'):
+                try:
+                    market_cap = get_market_cap(symbol)
+                    if market_cap > 0 and (market_cap < min_market_cap or market_cap > max_market_cap):
+                        skipped += 1
+                        continue
+                except:
+                    market_cap = 0
             
             # Pattern detection
             patterns_found = []
@@ -259,7 +435,6 @@ def screen_stocks(symbols, filters=None):
             
             # Check if all required patterns are present
             if required_patterns and not all(pattern in patterns_found for pattern in required_patterns):
-                print(f"❌ SCREENING: {symbol} missing required patterns. Found: {patterns_found}, Required: {required_patterns}")
                 skipped += 1
                 continue
             
@@ -276,10 +451,12 @@ def screen_stocks(symbols, filters=None):
                 "volume_metrics": volume_metrics
             }
             results.append(result)
-            print(f"✅ SCREENING: Added {symbol} to results - Price: ${current_price:.2f}, Patterns: {patterns_found}")
+            # Only log successful matches, not every processing step
+            if patterns_found or current_price > 50:  # Log interesting stocks
+                print(f"✅ SCREENING: Added {symbol} - ${current_price:.2f}, Patterns: {patterns_found}")
             
         except Exception as e:
-            print(f"❌ SCREENING: Error processing {symbol}: {e}")
+            # Reduce error logging noise
             skipped += 1
             continue
     

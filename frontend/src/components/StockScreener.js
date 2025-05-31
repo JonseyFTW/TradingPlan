@@ -230,7 +230,7 @@ const StockScreener = () => {
                       <TableCell align="right">{formatMarketCap(stock.market_cap)}</TableCell>
                       <TableCell>
                         <Typography variant="caption">
-                          {stock.sector.split(' ').slice(0, 3).join(' ')}
+                          {stock.sector ? stock.sector.split(' ').slice(0, 3).join(' ') : 'Unknown'}
                         </Typography>
                       </TableCell>
                       <TableCell>

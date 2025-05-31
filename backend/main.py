@@ -177,7 +177,7 @@ def screen_endpoint(request: ScreenRequest):
     # Get stocks to screen from major indices
     all_symbols = []
     print("🔍 SCREENING: Fetching index constituents...")
-    for idx in ["nasdaq", "sp500"]:
+    for idx in ["nasdaq", "sp500", "dow", "iwm"]:
         try:
             print(f"📊 SCREENING: Fetching {idx} constituents...")
             symbols = get_constituents(idx)
