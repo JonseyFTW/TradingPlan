@@ -5,6 +5,7 @@ from fastapi import FastAPI, HTTPException
 from sqlmodel import SQLModel, Session, create_engine, select
 from apscheduler.schedulers.background import BackgroundScheduler
 from dotenv import load_dotenv
+from typing import Optional # Ensure Optional is imported, already used below but good to confirm for new endpoint
 
 load_dotenv()
 
@@ -14,6 +15,7 @@ from utils     import (get_constituents, get_fundamentals,
                         screen_stocks, get_sector_performance, get_market_breadth)
 from analysis  import analyze_ticker
 from models    import Recommendation, WatchlistItem, PortfolioPosition, ScreenerCache, TradingPlan
+from backend.ibkr_sync_service import IBKRSyncService # Added import
 
 app = FastAPI()
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -585,6 +587,28 @@ def delete_position(position_id: int):
         sess.commit()
     
     return {"message": "Position deleted successfully"}
+
+@app.post("/portfolio/sync/ibkr")
+async def trigger_ibkr_sync(ibkr_account_id: Optional[str] = None):
+    """
+    Triggers synchronization of portfolio positions from Interactive Brokers.
+    Optionally filters by a specific IBKR account ID.
+    """
+    sync_service = IBKRSyncService(db_engine=engine)
+    try:
+        result = await sync_service.sync_portfolio_positions(ibkr_account_id_filter=ibkr_account_id)
+        if result.get("status") == "error":
+            # Determine appropriate status code based on error type if possible
+            # For now, using 500 for general server-side/sync issues
+            # and 400 if it was a client-side issue (e.g. bad account_id format, though not checked here)
+            # For simplicity, let's use 500 for any sync error from the service.
+            raise HTTPException(status_code=500, detail=result.get("message", "IBKR Sync failed"))
+        return result
+    except ConnectionRefusedError: # Example of a more specific error we might catch from IBKRClient
+        raise HTTPException(status_code=503, detail="IBKR Connection Refused. Ensure TWS/Gateway is running and accessible.")
+    except Exception as e:
+        # Catch any other unexpected errors during the process
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred during IBKR sync: {str(e)}")
 
 @app.get("/portfolio/performance")
 def get_portfolio_performance():
