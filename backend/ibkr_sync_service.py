@@ -1,8 +1,8 @@
 import asyncio
 from datetime import date, datetime # Added datetime
 from sqlmodel import Session, select # Added select
-from backend.ibkr_client import IBKRClient # Assuming backend.ibkr_client path
-from backend.models import PortfolioPosition # Assuming backend.models path
+from ibkr_client import IBKRClient # Assuming backend.ibkr_client path
+from models import PortfolioPosition # Assuming backend.models path
 # We'll need the database engine for session creation. This might need to be passed in
 # or accessed via a global/singleton if that's the pattern in main.py.
 # For now, let's assume it's passed to the service.

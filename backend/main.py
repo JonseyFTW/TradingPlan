@@ -15,7 +15,7 @@ from utils     import (get_constituents, get_fundamentals,
                         screen_stocks, get_sector_performance, get_market_breadth)
 from analysis  import analyze_ticker
 from models    import Recommendation, WatchlistItem, PortfolioPosition, ScreenerCache, TradingPlan
-from backend.ibkr_sync_service import IBKRSyncService # Added import
+from ibkr_sync_service import IBKRSyncService # Added import
 
 app = FastAPI()
 DATABASE_URL = os.getenv("DATABASE_URL")
