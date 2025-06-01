@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import {
   AppBar, Toolbar, Typography, Button, Container, TextField, MenuItem, CircularProgress, Box
@@ -11,6 +11,7 @@ import AlertsList from './components/AlertsList';
 import StockScreener from './components/StockScreener';
 import MarketDashboard from './components/MarketDashboard';
 import Portfolio from './components/Portfolio';
+import PlanBuilder from './components/PlanBuilder';
 
 function App() {
   const [view, setView] = useState('analyze');
@@ -22,14 +23,7 @@ function App() {
   const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  useEffect(()=>{
-    // load indices
-    axios.get('/api/indices').then(r=>setIndices(r.data.available || [])).catch(e=>setIndices([]));
-    // load watchlist
-    axios.get('/api/watchlist').then(r=>setWatch(r.data.watchlist || [])).catch(e=>setWatch([]));
-  },[]);
-
-  const analyze = async(sym)=>{
+  const analyze = useCallback(async(sym)=>{
     setLoading(true);
     try {
       const { data } = await axios.get(`/api/analyze/${sym}`);
@@ -39,7 +33,22 @@ function App() {
       alert("Not found"); setReport(null);
     }
     setLoading(false);
-  };
+  }, []);
+
+  useEffect(()=>{
+    // load indices
+    axios.get('/api/indices').then(r=>setIndices(r.data.available || [])).catch(e=>setIndices([]));
+    // load watchlist
+    axios.get('/api/watchlist').then(r=>setWatch(r.data.watchlist || [])).catch(e=>setWatch([]));
+    
+    // Check for symbol parameter in URL and auto-analyze
+    const urlParams = new URLSearchParams(window.location.search);
+    const symbolParam = urlParams.get('symbol');
+    if (symbolParam) {
+      setSymbol(symbolParam.toUpperCase());
+      analyze(symbolParam.toUpperCase());
+    }
+  },[analyze]);
 
   const fetchRecs = async()=>{
     setLoading(true);
@@ -72,7 +81,7 @@ function App() {
       <AppBar position="static">
         <Toolbar>
           <Typography variant="h6" sx={{ flexGrow:1 }}>Swing Trade Analyzer</Typography>
-          {['analyze','screener','market','portfolio','recs','watch','alerts'].map(v=>
+          {['analyze','screener','plan-builder','market','portfolio','recs','watch','alerts'].map(v=>
             <Button
               key={v}
               color="inherit"
@@ -142,6 +151,8 @@ function App() {
         {view==='market' && <MarketDashboard />}
 
         {view==='portfolio' && <Portfolio />}
+
+        {view==='plan-builder' && <PlanBuilder />}
 
         {view==='alerts' && (
           <>

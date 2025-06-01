@@ -362,6 +362,262 @@ def detect_momentum_pattern(df):
     
     return bool(higher_closes and volume_trend)
 
+def detect_oversold_bounce(df):
+    """Detect stocks that are oversold but showing early bounce signals"""
+    if df.empty or len(df) < 20:
+        return False
+    
+    # Calculate RSI 
+    import pandas_ta as ta
+    rsi = ta.rsi(df["Close"], length=14)
+    if rsi is None or len(rsi) < 5:
+        return False
+    
+    current_rsi = rsi.iloc[-1]
+    recent_rsi = rsi.tail(5)
+    
+    # Look for RSI between 25-40 (not quite oversold but getting there) with upward momentum
+    rsi_in_range = 25 <= current_rsi <= 40
+    rsi_rising = recent_rsi.iloc[-1] > recent_rsi.iloc[-3]  # RSI improving over 3 days
+    
+    # Check for price stabilization after decline
+    recent_closes = df["Close"].tail(3)
+    price_stabilizing = recent_closes.std() < recent_closes.mean() * 0.02  # Low volatility
+    
+    return bool(rsi_in_range and rsi_rising and price_stabilizing)
+
+def detect_pullback_to_support(df):
+    """Detect stocks pulling back to key support levels"""
+    if df.empty or len(df) < 50:
+        return False
+    
+    # Calculate 20-day and 50-day moving averages
+    ma20 = df["Close"].rolling(20).mean()
+    ma50 = df["Close"].rolling(50).mean()
+    
+    if ma20.empty or ma50.empty:
+        return False
+    
+    current_price = df["Close"].iloc[-1]
+    current_ma20 = ma20.iloc[-1]
+    current_ma50 = ma50.iloc[-1]
+    
+    # Look for pullback to 20-day MA while 20-day MA is above 50-day MA (uptrend intact)
+    uptrend_intact = current_ma20 > current_ma50
+    near_ma20_support = abs(current_price - current_ma20) / current_ma20 < 0.03  # Within 3% of 20-day MA
+    
+    # Volume should be lower during pullback (healthy consolidation)
+    recent_volume = df["Volume"].tail(5).mean()
+    avg_volume = df["Volume"].tail(20).mean()
+    lower_volume = recent_volume < avg_volume * 0.8
+    
+    return bool(uptrend_intact and near_ma20_support and lower_volume)
+
+def detect_volume_accumulation(df):
+    """Detect stocks showing volume accumulation patterns"""
+    if df.empty or len(df) < 20:
+        return False
+    
+    # Look for increasing volume over time with stable/rising prices
+    recent_volume = df["Volume"].tail(10)
+    older_volume = df["Volume"].tail(20).head(10)
+    
+    volume_increase = recent_volume.mean() > older_volume.mean() * 1.2
+    
+    # Price should be stable or rising during accumulation
+    recent_closes = df["Close"].tail(10)
+    price_trend = (recent_closes.iloc[-1] >= recent_closes.iloc[0])
+    
+    # Look for on-balance volume improvement
+    obv_recent = ((df["Close"].diff() > 0) * df["Volume"]).tail(10).sum()
+    obv_older = ((df["Close"].diff() > 0) * df["Volume"]).tail(20).head(10).sum()
+    
+    obv_improving = obv_recent > obv_older
+    
+    return bool(volume_increase and price_trend and obv_improving)
+
+def detect_base_building(df):
+    """Detect stocks building a base pattern (consolidation before breakout)"""
+    if df.empty or len(df) < 30:
+        return False
+    
+    # Look for price consolidation over recent period
+    recent_closes = df["Close"].tail(15)
+    price_range = (recent_closes.max() - recent_closes.min()) / recent_closes.mean()
+    
+    # Base building: price range should be tight (less than 8%)
+    tight_range = price_range < 0.08
+    
+    # Volume should be contracting during base building
+    recent_volume = df["Volume"].tail(15).mean()
+    older_volume = df["Volume"].tail(30).head(15).mean()
+    volume_contracting = recent_volume < older_volume * 0.9
+    
+    # Price should be holding above key support
+    support_level = recent_closes.min()
+    current_price = df["Close"].iloc[-1]
+    above_support = current_price > support_level * 1.02
+    
+    return bool(tight_range and volume_contracting and above_support)
+
+def detect_cup_and_handle(df):
+    """Detect cup and handle pattern formation"""
+    if df.empty or len(df) < 60:
+        return False
+    
+    closes = df["Close"]
+    
+    # Find the high point (left side of cup)
+    high_idx = closes.tail(60).idxmax()
+    high_price = closes[high_idx]
+    
+    # Find the low point (bottom of cup)
+    low_idx = closes.loc[high_idx:].idxmin()
+    low_price = closes[low_idx]
+    
+    # Current price should be near the high but not quite there (handle formation)
+    current_price = closes.iloc[-1]
+    
+    # Cup depth should be reasonable (10-35%)
+    cup_depth = (high_price - low_price) / high_price
+    reasonable_depth = 0.10 <= cup_depth <= 0.35
+    
+    # Handle should be shallow (less than 20% of cup depth)
+    recent_low = closes.tail(10).min()
+    handle_depth = (current_price - recent_low) / current_price
+    shallow_handle = handle_depth < 0.20
+    
+    # Price should be in upper portion of cup
+    in_upper_portion = current_price > low_price + (high_price - low_price) * 0.7
+    
+    return bool(reasonable_depth and shallow_handle and in_upper_portion)
+
+def detect_ascending_triangle(df):
+    """Detect ascending triangle pattern"""
+    if df.empty or len(df) < 30:
+        return False
+    
+    highs = df["High"].tail(30)
+    lows = df["Low"].tail(30)
+    
+    # Resistance should be relatively flat (ascending triangle top)
+    recent_highs = highs.tail(10)
+    resistance_level = recent_highs.max()
+    flat_resistance = recent_highs.std() / recent_highs.mean() < 0.05
+    
+    # Support should be rising (ascending triangle bottom)
+    support_slope = (lows.tail(5).mean() - lows.head(5).mean()) / lows.head(5).mean()
+    rising_support = support_slope > 0.02
+    
+    # Current price should be approaching resistance
+    current_price = df["Close"].iloc[-1]
+    near_resistance = current_price > resistance_level * 0.95
+    
+    return bool(flat_resistance and rising_support and near_resistance)
+
+def calculate_screening_score(df, patterns_found, volume_metrics):
+    """Calculate a quick screening score for ranking stocks"""
+    if df.empty or len(df) < 20:
+        return 0.0
+    
+    try:
+        import pandas_ta as ta
+        
+        score = 0.0
+        
+        # Base score from patterns (20 points max)
+        pattern_bonus = {
+            'gap_up': 3.0,
+            'breakout': 4.0,
+            'momentum': 3.5,
+            'oversold_bounce': 4.5,
+            'pullback_support': 4.0,
+            'volume_accumulation': 3.5,
+            'base_building': 3.0,
+            'cup_handle': 5.0,
+            'ascending_triangle': 4.5
+        }
+        for pattern in patterns_found:
+            score += pattern_bonus.get(pattern, 2.0)
+        
+        # Volume score (5 points max)
+        volume_ratio = volume_metrics.get("volume_ratio", 1.0)
+        if volume_ratio > 2.0:
+            score += 5.0
+        elif volume_ratio > 1.5:
+            score += 3.0
+        elif volume_ratio > 1.2:
+            score += 2.0
+        elif volume_ratio > 1.0:
+            score += 1.0
+        
+        # RSI score (3 points max)
+        rsi = ta.rsi(df["Close"], length=14)
+        if rsi is not None and len(rsi) > 0:
+            current_rsi = rsi.iloc[-1]
+            if 30 <= current_rsi <= 70:  # Ideal range
+                score += 3.0
+            elif 25 <= current_rsi <= 75:  # Good range
+                score += 2.0
+            elif 20 <= current_rsi <= 80:  # Acceptable range
+                score += 1.0
+        
+        # MACD score (3 points max)
+        macd_line = ta.macd(df["Close"])
+        if macd_line is not None and 'MACD_12_26_9' in macd_line.columns:
+            current_macd = macd_line['MACD_12_26_9'].iloc[-1]
+            recent_macd = macd_line['MACD_12_26_9'].tail(5)
+            
+            if current_macd > 0:  # Bullish
+                score += 2.0
+            if len(recent_macd) >= 3 and recent_macd.iloc[-1] > recent_macd.iloc[-3]:  # Improving
+                score += 1.0
+        
+        # Price momentum score (4 points max)
+        recent_closes = df["Close"].tail(10)
+        if len(recent_closes) >= 5:
+            price_change_5d = (recent_closes.iloc[-1] / recent_closes.iloc[-5] - 1) * 100
+            if price_change_5d > 5:
+                score += 4.0
+            elif price_change_5d > 2:
+                score += 3.0
+            elif price_change_5d > 0:
+                score += 2.0
+            elif price_change_5d > -2:
+                score += 1.0
+        
+        # Moving average score (3 points max)
+        ma20 = df["Close"].rolling(20).mean()
+        ma50 = df["Close"].rolling(50).mean()
+        if not ma20.empty and not ma50.empty and len(ma20) >= 20 and len(ma50) >= 50:
+            current_price = df["Close"].iloc[-1]
+            current_ma20 = ma20.iloc[-1]
+            current_ma50 = ma50.iloc[-1]
+            
+            if current_price > current_ma20 > current_ma50:  # Strong uptrend
+                score += 3.0
+            elif current_price > current_ma20:  # Above short-term MA
+                score += 2.0
+            elif current_price > current_ma50:  # Above long-term MA
+                score += 1.0
+        
+        # Volatility score (2 points max) - prefer moderate volatility
+        atr = ta.atr(df["High"], df["Low"], df["Close"], length=14)
+        if atr is not None and len(atr) > 0:
+            current_atr = atr.iloc[-1]
+            current_price = df["Close"].iloc[-1]
+            atr_percent = (current_atr / current_price) * 100
+            
+            if 2 <= atr_percent <= 6:  # Ideal volatility for swing trading
+                score += 2.0
+            elif 1 <= atr_percent <= 8:  # Good volatility
+                score += 1.0
+        
+        return min(score, 40.0)  # Cap at 40 points
+        
+    except Exception as e:
+        return 0.0
+
 def screen_stocks(symbols, filters=None):
     """Screen stocks based on multiple criteria"""
     if filters is None:
@@ -424,7 +680,7 @@ def screen_stocks(symbols, filters=None):
                 except:
                     market_cap = 0
             
-            # Pattern detection
+            # Pattern detection - Original patterns
             patterns_found = []
             if "gap_up" in required_patterns and detect_gap_up(df):
                 patterns_found.append("gap_up")
@@ -432,6 +688,20 @@ def screen_stocks(symbols, filters=None):
                 patterns_found.append("breakout")
             if "momentum" in required_patterns and detect_momentum_pattern(df):
                 patterns_found.append("momentum")
+            
+            # Advanced reversal and accumulation patterns
+            if "oversold_bounce" in required_patterns and detect_oversold_bounce(df):
+                patterns_found.append("oversold_bounce")
+            if "pullback_support" in required_patterns and detect_pullback_to_support(df):
+                patterns_found.append("pullback_support")
+            if "volume_accumulation" in required_patterns and detect_volume_accumulation(df):
+                patterns_found.append("volume_accumulation")
+            if "base_building" in required_patterns and detect_base_building(df):
+                patterns_found.append("base_building")
+            if "cup_handle" in required_patterns and detect_cup_and_handle(df):
+                patterns_found.append("cup_handle")
+            if "ascending_triangle" in required_patterns and detect_ascending_triangle(df):
+                patterns_found.append("ascending_triangle")
             
             # Check if all required patterns are present
             if required_patterns and not all(pattern in patterns_found for pattern in required_patterns):
@@ -441,6 +711,9 @@ def screen_stocks(symbols, filters=None):
             volume_metrics = calculate_volume_metrics(df)
             ticker_details = get_ticker_details(symbol)
             
+            # Calculate quick screening score
+            score = calculate_screening_score(df, patterns_found, volume_metrics)
+            
             result = {
                 "symbol": symbol,
                 "price": round(current_price, 2),
@@ -448,7 +721,8 @@ def screen_stocks(symbols, filters=None):
                 "market_cap": int(market_cap) if market_cap > 0 else 0,
                 "sector": ticker_details.get("sic_description", "Unknown"),
                 "patterns": patterns_found,
-                "volume_metrics": volume_metrics
+                "volume_metrics": volume_metrics,
+                "score": round(score, 1)
             }
             results.append(result)
             # Only log successful matches, not every processing step

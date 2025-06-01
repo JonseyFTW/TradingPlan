@@ -13,7 +13,9 @@
       "Bash(docker-compose exec:*)",
       "Bash(find:*)",
       "Bash(docker-compose ps:*)",
-      "Bash(timeout 10 docker-compose logs -f backend)"
+      "Bash(timeout 10 docker-compose logs -f backend)",
+      "Bash(docker logs:*)",
+      "Bash(docker exec:*)"
     ],
     "deny": []
   }

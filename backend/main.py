@@ -13,7 +13,7 @@ from utils     import (get_constituents, get_fundamentals,
                         get_news, get_options_open_interest, INDEX_SYMBOLS,
                         screen_stocks, get_sector_performance, get_market_breadth)
 from analysis  import analyze_ticker
-from models    import Recommendation, WatchlistItem, PortfolioPosition
+from models    import Recommendation, WatchlistItem, PortfolioPosition, ScreenerCache, TradingPlan
 
 app = FastAPI()
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -54,9 +54,120 @@ def run_recommendations():
         sess.commit()
     print(f"🗓️ Recommendations for {today} saved.")
 
+def run_daily_screening():
+    """Pre-cache common screening patterns at 1am daily"""
+    print(f"🕐 Starting daily pre-screening at 1am...")
+    today = date.today()
+    
+    # Get all symbols for screening
+    all_symbols = []
+    for idx in ["nasdaq", "sp500", "dow", "iwm"]:
+        try:
+            symbols = get_constituents(idx)
+            all_symbols += symbols
+        except:
+            pass
+    
+    all_symbols = list(set(all_symbols))
+    print(f"📊 PRE-SCREENING: Processing {len(all_symbols)} symbols for common patterns")
+    
+    # Common filter combinations to pre-cache
+    common_filters = [
+        # Default filters (most common usage)
+        {
+            "min_price": 1,
+            "max_price": 1000,
+            "min_volume": 10000,
+            "min_market_cap": 10000000,
+            "patterns": []
+        },
+        # Popular pattern combinations
+        {
+            "min_price": 5,
+            "max_price": 500,
+            "min_volume": 100000,
+            "min_market_cap": 50000000,
+            "patterns": ["momentum"]
+        },
+        {
+            "min_price": 10,
+            "max_price": 200,
+            "min_volume": 100000,
+            "min_market_cap": 100000000,
+            "patterns": ["breakout"]
+        },
+        {
+            "min_price": 5,
+            "max_price": 500,
+            "min_volume": 100000,
+            "min_market_cap": 50000000,
+            "patterns": ["oversold_bounce"]
+        },
+        {
+            "min_price": 10,
+            "max_price": 300,
+            "min_volume": 100000,
+            "min_market_cap": 100000000,
+            "patterns": ["momentum", "breakout"]
+        }
+    ]
+    
+    with Session(engine) as sess:
+        # Clear old cache entries first
+        old_cache = sess.exec(
+            select(ScreenerCache).where(ScreenerCache.created_date < today)
+        ).all()
+        for cache in old_cache:
+            sess.delete(cache)
+        sess.commit()
+        print(f"🗑️ PRE-SCREENING: Cleared {len(old_cache)} old cache entries")
+    
+    # Pre-cache each filter combination
+    for i, filters in enumerate(common_filters, 1):
+        try:
+            print(f"🔍 PRE-SCREENING: Running filter set {i}/{len(common_filters)}")
+            
+            # Generate cache key
+            cache_key = ScreenerCache.generate_cache_key(filters)
+            
+            # Check if already cached today
+            with Session(engine) as sess:
+                existing = sess.exec(
+                    select(ScreenerCache).where(
+                        ScreenerCache.cache_key == cache_key,
+                        ScreenerCache.created_date == today
+                    )
+                ).first()
+                
+                if existing:
+                    print(f"✅ PRE-SCREENING: Filter set {i} already cached")
+                    continue
+            
+            # Run screening
+            results = screen_stocks(all_symbols, filters)
+            
+            # Cache the results
+            with Session(engine) as sess:
+                cache_entry = ScreenerCache(
+                    cache_key=cache_key,
+                    filters_json=json.dumps(filters),
+                    results_json=json.dumps(results),
+                    created_date=today,
+                    result_count=len(results)
+                )
+                sess.add(cache_entry)
+                sess.commit()
+                print(f"💾 PRE-SCREENING: Cached {len(results)} results for filter set {i}")
+                
+        except Exception as e:
+            print(f"❌ PRE-SCREENING: Failed filter set {i}: {e}")
+    
+    print(f"🎉 Daily pre-screening completed!")
+
 def parse_cron_field(field):
     return None if field == '*' else int(field)
 
+# Add recommendation job
 scheduler.add_job(
     run_recommendations, 'cron',
     minute=parse_cron_field(CRON[0]),
@@ -65,6 +176,17 @@ scheduler.add_job(
     month=parse_cron_field(CRON[3]),
     day_of_week=None if CRON[4] == '*' else CRON[4]
 )
+
+# Add daily pre-screening job at 1am
+scheduler.add_job(
+    run_daily_screening, 'cron',
+    minute=0,
+    hour=1,  # 1am daily
+    day='*',
+    month='*',
+    day_of_week='*'
+)
+
 scheduler.start()
 
 @app.get("/indices")
@@ -171,8 +293,33 @@ class ScreenRequest(BaseModel):
 
 @app.post("/screen")
 def screen_endpoint(request: ScreenRequest):
-    """Screen stocks based on filters"""
+    """Screen stocks based on filters with caching"""
     filters = request.dict(exclude_unset=True)
+    today = date.today()
+    
+    # Generate cache key for this filter combination
+    cache_key = ScreenerCache.generate_cache_key(filters)
+    
+    # Check if we have cached results from today
+    with Session(engine) as sess:
+        cached_result = sess.exec(
+            select(ScreenerCache).where(
+                ScreenerCache.cache_key == cache_key,
+                ScreenerCache.created_date == today
+            )
+        ).first()
+        
+        if cached_result:
+            print(f"🚀 SCREENING: Using cached results for today ({cached_result.result_count} stocks)")
+            cached_data = json.loads(cached_result.results_json)
+            return {
+                "screener_results": cached_data,
+                "from_cache": True,
+                "cache_date": cached_result.created_date.isoformat()
+            }
+    
+    # No cache found - run fresh screening
+    print(f"🔍 SCREENING: No cache found, running fresh screen...")
     
     # Get stocks to screen from major indices
     all_symbols = []
@@ -201,8 +348,69 @@ def screen_endpoint(request: ScreenRequest):
         all_symbols = list(set(all_symbols))
         print(f"📊 SCREENING: Total unique symbols to screen: {len(all_symbols)}")
     
+    # Run the screening
     results = screen_stocks(all_symbols, filters)
-    return {"screener_results": results}
+    
+    # Cache the results
+    try:
+        with Session(engine) as sess:
+            # Remove any old cache entries for this filter combination
+            old_cache = sess.exec(
+                select(ScreenerCache).where(ScreenerCache.cache_key == cache_key)
+            ).all()
+            for old in old_cache:
+                sess.delete(old)
+            
+            # Create new cache entry
+            cache_entry = ScreenerCache(
+                cache_key=cache_key,
+                filters_json=json.dumps(filters),
+                results_json=json.dumps(results),
+                created_date=today,
+                result_count=len(results)
+            )
+            sess.add(cache_entry)
+            sess.commit()
+            print(f"💾 SCREENING: Cached {len(results)} results for future use")
+    except Exception as e:
+        print(f"⚠️ SCREENING: Failed to cache results: {e}")
+    
+    return {
+        "screener_results": results,
+        "from_cache": False,
+        "cache_date": today.isoformat()
+    }
+
+@app.get("/screen/cache")
+def get_cached_screens():
+    """Get all cached screening results for today"""
+    today = date.today()
+    with Session(engine) as sess:
+        cached_results = sess.exec(
+            select(ScreenerCache).where(ScreenerCache.created_date == today)
+        ).all()
+        
+        cache_info = []
+        for cache in cached_results:
+            filters = json.loads(cache.filters_json)
+            cache_info.append({
+                "cache_key": cache.cache_key,
+                "filters": filters,
+                "result_count": cache.result_count,
+                "created_date": cache.created_date.isoformat()
+            })
+        
+        return {"cached_screens": cache_info}
+
+@app.delete("/screen/cache")
+def clear_screen_cache():
+    """Clear all cached screening results"""
+    with Session(engine) as sess:
+        old_cache = sess.exec(select(ScreenerCache)).all()
+        for cache in old_cache:
+            sess.delete(cache)
+        sess.commit()
+        return {"message": f"Cleared {len(old_cache)} cached screening results"}
 
 @app.get("/market/sectors")
 def market_sectors():
@@ -426,3 +634,251 @@ def get_portfolio_performance():
             "total_return_pct": round(total_return_pct, 2)
         }
     }
+
+# Plan Builder Endpoints
+
+class PlanBuilderRequest(BaseModel):
+    plan_name: str
+    total_capital: float
+    risk_percentage: float = 2.0
+    max_positions: int = 5
+    filters: dict
+    
+@app.post("/plan-builder/create")
+def create_trading_plan(request: PlanBuilderRequest):
+    """Create a comprehensive trading plan with position sizing and allocation"""
+    today = date.today()
+    
+    # Validate inputs
+    if request.total_capital <= 0:
+        raise HTTPException(400, "Total capital must be positive")
+    if request.risk_percentage <= 0 or request.risk_percentage > 10:
+        raise HTTPException(400, "Risk percentage must be between 0.1% and 10%")
+    if request.max_positions < 1 or request.max_positions > 20:
+        raise HTTPException(400, "Max positions must be between 1 and 20")
+    
+    # Get screening results (try cache first)
+    cache_key = ScreenerCache.generate_cache_key(request.filters)
+    screening_results = []
+    
+    with Session(engine) as sess:
+        # Try to get cached results first
+        cached_result = sess.exec(
+            select(ScreenerCache).where(
+                ScreenerCache.cache_key == cache_key,
+                ScreenerCache.created_date == today
+            )
+        ).first()
+        
+        if cached_result:
+            print(f"🚀 PLAN BUILDER: Using cached screening results")
+            screening_results = json.loads(cached_result.results_json)
+        else:
+            print(f"🔍 PLAN BUILDER: Running fresh screening for plan")
+            # Get symbols and run screening
+            all_symbols = []
+            for idx in ["nasdaq", "sp500", "dow", "iwm"]:
+                try:
+                    symbols = get_constituents(idx)
+                    all_symbols += symbols
+                except:
+                    pass
+            
+            all_symbols = list(set(all_symbols))
+            screening_results = screen_stocks(all_symbols, request.filters)
+    
+    # Sort by score and take top candidates
+    top_candidates = sorted(screening_results, key=lambda x: x.get("score", 0), reverse=True)
+    
+    # Select top stocks for the plan (up to max_positions)
+    selected_stocks = top_candidates[:request.max_positions]
+    
+    if not selected_stocks:
+        raise HTTPException(404, "No stocks found matching the criteria")
+    
+    # Create detailed trading plan for each stock
+    plan_positions = []
+    total_allocated = 0
+    
+    for stock in selected_stocks:
+        try:
+            # Get detailed analysis for entry/exit planning
+            analysis = analyze_ticker(stock["symbol"])
+            if "error" in analysis:
+                continue
+                
+            current_price = stock["price"]
+            
+            # Calculate position sizing based on plan analysis
+            plan_entry_range = analysis.get("plan", {}).get("entry", [current_price])
+            suggested_entry = plan_entry_range[0] if plan_entry_range else current_price
+            suggested_stop = analysis.get("plan", {}).get("stop_loss", current_price * 0.92)  # 8% default stop
+            
+            # Calculate position size using risk management
+            position_info = TradingPlan.calculate_position_sizing(
+                request.total_capital / request.max_positions,  # Equal allocation base
+                request.risk_percentage,
+                suggested_entry,
+                suggested_stop
+            )
+            
+            if position_info["shares"] == 0:
+                continue
+                
+            # Get targets from analysis
+            targets = analysis.get("plan", {}).get("targets", [
+                {"price": current_price * 1.10, "pct": 50},
+                {"price": current_price * 1.20, "pct": 30},
+                {"price": current_price * 1.30, "pct": 20}
+            ])
+            
+            position_plan = {
+                "symbol": stock["symbol"],
+                "current_price": current_price,
+                "score": stock.get("score", 0),
+                "patterns": stock.get("patterns", []),
+                "sector": stock.get("sector", "Unknown"),
+                
+                # Entry strategy
+                "suggested_entry": round(suggested_entry, 2),
+                "entry_range": [round(p, 2) for p in plan_entry_range[:2]] if len(plan_entry_range) >= 2 else [round(suggested_entry, 2)],
+                
+                # Position sizing
+                "shares": position_info["shares"],
+                "position_value": position_info["position_value"],
+                "allocation_pct": round((position_info["position_value"] / request.total_capital) * 100, 1),
+                
+                # Risk management
+                "stop_loss": round(suggested_stop, 2),
+                "risk_amount": position_info["risk_amount"],
+                "risk_pct": round((position_info["risk_amount"] / request.total_capital) * 100, 2),
+                
+                # Profit targets
+                "targets": [
+                    {
+                        "price": round(target["price"], 2),
+                        "shares_to_sell": int(position_info["shares"] * target["pct"] / 100),
+                        "allocation_pct": target["pct"],
+                        "potential_profit": round((target["price"] - suggested_entry) * int(position_info["shares"] * target["pct"] / 100), 2)
+                    }
+                    for target in targets
+                ],
+                
+                # Technical levels
+                "support_level": analysis.get("summary", {}).get("key_levels", {}).get("support", suggested_stop),
+                "resistance_level": analysis.get("summary", {}).get("key_levels", {}).get("resistance", current_price * 1.15),
+                
+                # Analysis summary
+                "conviction": analysis.get("summary", {}).get("conviction", "MEDIUM"),
+                "recommendation": analysis.get("summary", {}).get("recommendation", "Hold for technical setup")
+            }
+            
+            plan_positions.append(position_plan)
+            total_allocated += position_info["position_value"]
+            
+        except Exception as e:
+            print(f"⚠️ PLAN BUILDER: Error processing {stock['symbol']}: {e}")
+            continue
+    
+    if not plan_positions:
+        raise HTTPException(404, "Unable to create positions for any selected stocks")
+    
+    # Create plan summary
+    plan_summary = {
+        "plan_name": request.plan_name,
+        "created_date": today.isoformat(),
+        "capital_info": {
+            "total_capital": request.total_capital,
+            "allocated_capital": round(total_allocated, 2),
+            "cash_remaining": round(request.total_capital - total_allocated, 2),
+            "allocation_pct": round((total_allocated / request.total_capital) * 100, 1)
+        },
+        "risk_management": {
+            "risk_per_position": request.risk_percentage,
+            "max_positions": request.max_positions,
+            "total_risk_amount": round(sum(pos["risk_amount"] for pos in plan_positions), 2),
+            "total_risk_pct": round(sum(pos["risk_pct"] for pos in plan_positions), 2)
+        },
+        "positions": plan_positions,
+        "screening_info": {
+            "total_candidates": len(screening_results),
+            "selected_positions": len(plan_positions),
+            "filters_used": request.filters
+        }
+    }
+    
+    # Save plan to database
+    try:
+        with Session(engine) as sess:
+            trading_plan = TradingPlan(
+                plan_name=request.plan_name,
+                total_capital=request.total_capital,
+                risk_percentage=request.risk_percentage,
+                max_positions=request.max_positions,
+                filters_json=json.dumps(request.filters),
+                created_date=today,
+                plan_data=json.dumps(plan_summary)
+            )
+            sess.add(trading_plan)
+            sess.commit()
+            sess.refresh(trading_plan)
+            
+            plan_summary["plan_id"] = trading_plan.id
+            print(f"💾 PLAN BUILDER: Saved plan '{request.plan_name}' with {len(plan_positions)} positions")
+            
+    except Exception as e:
+        print(f"⚠️ PLAN BUILDER: Failed to save plan: {e}")
+        # Still return the plan even if saving fails
+        plan_summary["plan_id"] = None
+    
+    return {"trading_plan": plan_summary}
+
+@app.get("/plan-builder/plans")
+def get_trading_plans():
+    """Get all saved trading plans"""
+    with Session(engine) as sess:
+        plans = sess.exec(select(TradingPlan)).all()
+        
+        plan_summaries = []
+        for plan in plans:
+            plan_data = json.loads(plan.plan_data)
+            summary = {
+                "id": plan.id,
+                "plan_name": plan.plan_name,
+                "total_capital": plan.total_capital,
+                "created_date": plan.created_date.isoformat(),
+                "status": plan.status,
+                "num_positions": len(plan_data.get("positions", [])),
+                "total_allocation": plan_data.get("capital_info", {}).get("allocated_capital", 0),
+                "total_risk": plan_data.get("risk_management", {}).get("total_risk_pct", 0)
+            }
+            plan_summaries.append(summary)
+    
+    return {"trading_plans": plan_summaries}
+
+@app.get("/plan-builder/plans/{plan_id}")
+def get_trading_plan(plan_id: int):
+    """Get detailed trading plan by ID"""
+    with Session(engine) as sess:
+        plan = sess.get(TradingPlan, plan_id)
+        if not plan:
+            raise HTTPException(404, "Trading plan not found")
+        
+        plan_data = json.loads(plan.plan_data)
+        plan_data["plan_id"] = plan.id
+        plan_data["status"] = plan.status
+        
+        return {"trading_plan": plan_data}
+
+@app.delete("/plan-builder/plans/{plan_id}")
+def delete_trading_plan(plan_id: int):
+    """Delete a trading plan"""
+    with Session(engine) as sess:
+        plan = sess.get(TradingPlan, plan_id)
+        if not plan:
+            raise HTTPException(404, "Trading plan not found")
+        
+        sess.delete(plan)
+        sess.commit()
+        
+        return {"message": f"Trading plan '{plan.plan_name}' deleted successfully"}
