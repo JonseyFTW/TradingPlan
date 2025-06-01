@@ -237,7 +237,7 @@ const Portfolio = () => {
             Current Positions
           </Typography>
           
-          <TableContainer component={Paper}>
+          <TableContainer component={Paper} sx={{ overflowX: 'auto', maxWidth: '100%' }}>
             <Table>
               <TableHead>
                 <TableRow>

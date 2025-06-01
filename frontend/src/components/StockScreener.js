@@ -318,7 +318,7 @@ const StockScreener = () => {
             variant="contained"
             onClick={runScreen}
             disabled={loading}
-            sx={{ mt: 2 }}
+            sx={{ mt: 2, width: { xs: '100%', sm: 'auto' } }}
             startIcon={loading ? <CircularProgress size={20} /> : null}
           >
             {loading ? 'Screening...' : 'Run Screen'}
@@ -351,7 +351,7 @@ const StockScreener = () => {
               Screening Results ({results.length} stocks)
             </Typography>
             
-            <TableContainer component={Paper}>
+            <TableContainer component={Paper} sx={{ overflowX: 'auto', maxWidth: '100%' }}>
               <Table>
                 <TableHead>
                   <TableRow>

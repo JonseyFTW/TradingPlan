@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import {
-  AppBar, Toolbar, Typography, Button, Container, TextField, MenuItem, CircularProgress, Box
+  AppBar, Toolbar, Typography, Button, Container, TextField, MenuItem, CircularProgress, Box,
+  Drawer, IconButton, List, ListItem, ListItemText, useTheme, useMediaQuery
 } from '@mui/material';
+import MenuIcon from '@mui/icons-material/Menu';
 import ChartPanel from './components/ChartPanel';
 import ReportCard from './components/ReportCard';
 import RecommendationTable from './components/RecommendationTable';
@@ -22,6 +24,10 @@ function App() {
   const [watch, setWatch] = useState([]);
   const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   const analyze = useCallback(async(sym)=>{
     setLoading(true);
@@ -76,42 +82,92 @@ function App() {
     setWatch(ws=>(ws || []).filter(w=>w!==sym));
   };
 
+  const handleDrawerToggle = () => {
+    setDrawerOpen(!drawerOpen);
+  };
+
+  const navigationLinks = ['analyze', 'screener', 'plan-builder', 'market', 'portfolio', 'recs', 'watch', 'alerts'];
+
+  const handleNavClick = (navView) => {
+    if (navView === 'recs') fetchRecs();
+    else if (navView === 'alerts') fetchAlerts();
+    setView(navView);
+    if (isMobile) setDrawerOpen(false); // Close drawer on mobile after click
+  };
+
+  const navItems = navigationLinks.map(v => (
+    <Button
+      key={v}
+      color="inherit"
+      onClick={() => handleNavClick(v)}
+    >
+      {v.toUpperCase()}
+    </Button>
+  ));
+
+  const drawerItems = (
+    <List>
+      {navigationLinks.map((text) => (
+        <ListItem button key={text} onClick={() => handleNavClick(text)}>
+          <ListItemText primary={text.toUpperCase()} />
+        </ListItem>
+      ))}
+    </List>
+  );
+
   return (
     <>
       <AppBar position="static">
         <Toolbar>
-          <Typography variant="h6" sx={{ flexGrow:1 }}>Swing Trade Analyzer</Typography>
-          {['analyze','screener','plan-builder','market','portfolio','recs','watch','alerts'].map(v=>
-            <Button
-              key={v}
-              color="inherit"
-              onClick={()=>{
-                if(v==='recs') fetchRecs();
-                else if(v==='alerts') fetchAlerts();
-                setView(v);
-              }}
-            >
-              {v.toUpperCase()}
-            </Button>
+          <Typography variant="h6" sx={{ flexGrow: 1 }}>Swing Trade Analyzer</Typography>
+          {isMobile ? (
+            <>
+              <IconButton
+                color="inherit"
+                aria-label="open drawer"
+                edge="start"
+                onClick={handleDrawerToggle}
+                sx={{ mr: 2 }}
+              >
+                <MenuIcon />
+              </IconButton>
+              <Drawer
+                anchor="left"
+                open={drawerOpen}
+                onClose={handleDrawerToggle}
+              >
+                {drawerItems}
+              </Drawer>
+            </>
+          ) : (
+            navItems
           )}
         </Toolbar>
       </AppBar>
-      <Container sx={{ py:4 }}>
+      <Container sx={{ py: 4 }}>
         {view==='analyze' && (
           <>
-            <Box sx={{ display:'flex', gap:2, mb:2 }}>
+            <Box sx={{ display:'flex', gap:2, mb:2, flexDirection: { xs: 'column', sm: 'row' } }}>
               <TextField
                 label="Ticker"
                 value={symbol}
                 onChange={e=>setSymbol(e.target.value.toUpperCase())}
+                fullWidth={{ xs: true, sm: false }} // Becomes fullWidth on xs, default otherwise
+                sx={{ flexGrow: { sm: 1 } }} // Allow ticker field to grow on sm+
               />
-              <Button variant="contained" onClick={()=>analyze(symbol)}>Analyze</Button>
+              <Button
+                variant="contained"
+                onClick={()=>analyze(symbol)}
+                sx={{ width: { xs: '100%', sm: 'auto' } }} // Full width on xs
+              >
+                Analyze
+              </Button>
               <TextField
                 select
                 label="Scan Index"
-                value={symbol}
+                value={symbol} // This seems like a bug, should it be a different state? Assuming it's intentional for now.
                 onChange={e=>analyze(e.target.value)}
-                sx={{ width:160 }}
+                sx={{ width: { xs: '100%', sm: 160 } }}
               >
                 {(indices || []).map(i=>
                   <MenuItem key={i} value={i}>{i.toUpperCase()}</MenuItem>

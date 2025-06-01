@@ -1,14 +1,15 @@
 import React from 'react';
 import {
-  Table, TableBody, TableCell, TableHead, TableRow, Button
+  Table, TableBody, TableCell, TableHead, TableRow, Button, TableContainer, Paper
 } from '@mui/material';
 
 export default function RecommendationTable({ recs, onSelect }) {
   return (
-    <Table sx={{ mt:4 }}>
-      <TableHead>
-        <TableRow>
-          <TableCell>Symbol</TableCell>
+    <TableContainer component={Paper} sx={{ mt: 4, overflowX: 'auto' }}>
+      <Table>
+        <TableHead>
+          <TableRow>
+            <TableCell>Symbol</TableCell>
           <TableCell>Score</TableCell>
           <TableCell>Price</TableCell>
           <TableCell>Action</TableCell>

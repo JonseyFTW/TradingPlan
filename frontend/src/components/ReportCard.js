@@ -107,7 +107,7 @@ export default function ReportCard({ report }) {
                     </Typography>
                     
                     <Grid container spacing={1}>
-                      <Grid item xs={6}>
+                      <Grid item xs={12} sm={6}>
                         <Typography variant="caption" color="text.secondary">
                           vs SPY (20d)
                         </Typography>
@@ -120,7 +120,7 @@ export default function ReportCard({ report }) {
                           {analysis.relative_strength.vs_spy?.relative_strength_20d}%
                         </Typography>
                       </Grid>
-                      <Grid item xs={6}>
+                      <Grid item xs={12} sm={6}>
                         <Typography variant="caption" color="text.secondary">
                           Beta
                         </Typography>

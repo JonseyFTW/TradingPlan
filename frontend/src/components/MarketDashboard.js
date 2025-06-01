@@ -163,7 +163,7 @@ const MarketDashboard = () => {
                 Sectors Advancing: {sectors_advancing}
               </Typography>
               
-              <TableContainer component={Paper} variant="outlined">
+              <TableContainer component={Paper} variant="outlined" sx={{ overflowX: 'auto', maxWidth: '100%' }}>
                 <Table size="small">
                   <TableHead>
                     <TableRow>

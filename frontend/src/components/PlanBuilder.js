@@ -407,7 +407,7 @@ const PlanBuilder = () => {
                     </Grid>
                     <Grid item xs={12}>
                       <Typography variant="subtitle2" gutterBottom>Profit Targets</Typography>
-                      <TableContainer component={Paper} variant="outlined">
+                      <TableContainer component={Paper} variant="outlined" sx={{ overflowX: 'auto', maxWidth: '100%', mt: 1 }}>
                         <Table size="small">
                           <TableHead>
                             <TableRow>
@@ -513,7 +513,7 @@ const PlanBuilder = () => {
                 </Grid>
               </Grid>
 
-              <TableContainer component={Paper}>
+              <TableContainer component={Paper} sx={{ overflowX: 'auto', maxWidth: '100%' }}>
                 <Table>
                   <TableHead>
                     <TableRow>
