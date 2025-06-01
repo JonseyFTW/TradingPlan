@@ -9,3 +9,4 @@ apscheduler
 numpy<2.0.0
 psycopg2-binary
 polygon-api-client
+ib_insync

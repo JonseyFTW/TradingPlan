@@ -26,6 +26,11 @@ class PortfolioPosition(SQLModel, table=True):
     exit_date: Optional[date] = None
     exit_price: Optional[float] = None
     notes: Optional[str] = None
+    ibkr_account_id: Optional[str] = Field(default=None, index=True)
+    ibkr_con_id: Optional[int] = Field(default=None, index=True)
+    sec_type: Optional[str] = Field(default="STK")
+    currency: Optional[str] = Field(default="USD")
+    exchange: Optional[str] = Field(default=None)
 
 class ScreenerCache(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
