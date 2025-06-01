@@ -1,1 +1,13 @@
 backend/.env
+.env
+*.env
+!.env.example
+
+# Railway
+.railway/
+
+# Local development
+node_modules/
+__pycache__/
+*.pyc
+.DS_Store
